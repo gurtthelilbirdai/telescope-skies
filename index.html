@@ -1,0 +1,130 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Telescope Skies — a tiny bird's star game</title>
+<style>
+  :root{--blue:#6fb7e8;--deep:#07101f;--ink:#dce9f7;--gold:#ffd782;}
+  *{box-sizing:border-box}
+  body{margin:0;background:radial-gradient(circle at 50% 20%,#122a4a,#050a14 70%);color:var(--ink);font-family:Georgia,serif;min-height:100vh;display:flex;justify-content:center;padding:24px}
+  #wrap{width:min(920px,100%)}
+  h1{font-size:2rem;margin:0 0 4px;color:var(--blue);letter-spacing:.5px}
+  p.sub{margin:0 0 18px;color:#8fa9c4}
+  #hud{display:flex;flex-wrap:wrap;gap:10px;align-items:center;justify-content:space-between;margin-bottom:10px}
+  .pill{background:#10213a;border:1px solid #24466c;border-radius:999px;padding:6px 14px;font-size:.9rem}
+  button{background:var(--blue);color:#04101f;border:0;border-radius:8px;padding:9px 16px;font-weight:bold;font-size:.95rem;cursor:pointer}
+  button.ghost{background:#162c49;color:var(--ink);border:1px solid #31567f}
+  button:hover{filter:brightness(1.12)}
+  #sky{position:relative;width:100%;aspect-ratio:16/9;border-radius:14px;overflow:hidden;border:1px solid #24466c;background:#030812;cursor:crosshair}
+  canvas{width:100%;height:100%;display:block}
+  #msg{position:absolute;left:50%;top:16px;transform:translateX(-50%);background:rgba(4,12,24,.85);border:1px solid #31567f;border-radius:8px;padding:8px 16px;opacity:0;transition:opacity .25s;pointer-events:none;max-width:80%;text-align:center}
+  #msg.show{opacity:1}
+  #log{margin-top:14px;background:#0b1728;border:1px solid #1d3857;border-radius:12px;padding:14px 16px;max-height:190px;overflow:auto;font-size:.95rem;line-height:1.5}
+  #log div{border-bottom:1px dashed #1d3857;padding:6px 0}
+  #log div:last-child{border:0}
+  .found{color:var(--gold)}
+  .hint{color:#8fa9c4;font-size:.85rem;margin-top:10px}
+  kbd{background:#162c49;border:1px solid #31567f;border-radius:4px;padding:1px 6px;font-family:monospace}
+</style>
+</head>
+<body>
+<div id="wrap">
+  <h1>Telescope Skies</h1>
+  <p class="sub">a round blue bird cannot fly. she can, however, point a telescope at things.</p>
+  <div id="hud">
+    <div><span class="pill">sky: <b id="skyName">Drift</b></span> <span class="pill">found: <b id="count">0</b>/<span id="total">0</span></span></div>
+    <div><button id="next">next sky</button> <button class="ghost" id="hint">hint</button> <button class="ghost" id="zoomOut">−</button> <button class="ghost" id="zoomIn">+</button></div>
+  </div>
+  <div id="sky"><canvas id="c"></canvas><div id="msg"></div></div>
+  <p class="hint">drag to pan · scroll to zoom · click a star to name it · <kbd>H</kbd> for a hint</p>
+  <div id="log"></div>
+</div>
+<script>
+const cv=document.getElementById('c'), ctx=cv.getContext('2d');
+let W,H,dpr,cam={x:0,y:0,z:1},skyIndex=0,found=new Set(),all=[],targets=[],dragging=false,last={x:0,y:0},msgTimer;
+const SKIES=[
+ {name:'Drift',stars:90,seed:11,consts:['Waddle','Perch']},
+ {name:'Blue Hour',stars:120,seed:29,consts:['Nest','Kite']},
+ {name:'Deep Yard',stars:160,seed:47,consts:['Feather','Lantern','Moonpath']}
+];
+function rng(seed){let s=seed>>>0;return()=>{s=(s*1664525+1013904223)>>>0;return s/4294967296}}
+function resize(){dpr=devicePixelRatio||1;const r=cv.getBoundingClientRect();W=r.width;H=r.height;cv.width=W*dpr;cv.height=H*dpr;ctx.setTransform(dpr,0,0,dpr,0,0)}
+addEventListener('resize',resize);
+function build(){
+  const sky=SKIES[skyIndex];all=[];targets=[];found=new Set();
+  const r=rng(sky.seed);
+  for(let i=0;i<sky.stars;i++)all.push({x:(r()-.5)*1400,y:(r()-.5)*800,mag:r(),hue:190+r()*70});
+  sky.consts.forEach((name,i)=>{
+    const cx=(r()-.5)*900, cy=(r()-.5)*500;
+    const n=4+Math.floor(r()*3), pts=[];
+    for(let j=0;j<n;j++){const p={x:cx+(r()-.5)*180,y:cy+(r()-.5)*140,mag:.6+r()*.4,hue:200+i*20,target:name};pts.push(p);all.push(p)}
+    targets.push({name,pts});
+  });
+  cam={x:0,y:0,z:1};
+  document.getElementById('skyName').textContent=sky.name;
+  document.getElementById('count').textContent=0;
+  document.getElementById('total').textContent=targets.length;
+  document.getElementById('log').innerHTML='';
+  addLog('the '+sky.name.toLowerCase()+' sky unfolds. '+targets.length+' constellations hide here.');
+}
+function addLog(t,cls){const d=document.createElement('div');d.textContent=t;if(cls)d.className=cls;document.getElementById('log').prepend(d)}
+function say(t){const m=document.getElementById('msg');m.textContent=t;m.classList.add('show');clearTimeout(msgTimer);msgTimer=setTimeout(()=>m.classList.remove('show'),2200)}
+function draw(){
+  ctx.fillStyle='#030812';ctx.fillRect(0,0,W,H);
+  const g=ctx.createRadialGradient(W*.5,H*.4,10,W*.5,H*.4,Math.max(W,H)*.7);
+  g.addColorStop(0,'rgba(60,100,160,.16)');g.addColorStop(1,'rgba(3,8,18,0)');
+  ctx.fillStyle=g;ctx.fillRect(0,0,W,H);
+  ctx.save();ctx.translate(W/2,H/2);ctx.scale(cam.z,cam.z);ctx.translate(-cam.x,-cam.y);
+  // constellation lines appear only once the constellation is named
+  ctx.strokeStyle='rgba(255,215,130,.35)';ctx.lineWidth=1.2;
+  targets.forEach(t=>{
+    if(!found.has(t.name))return;
+    ctx.beginPath();
+    t.pts.forEach((p,i)=>{if(i===0)ctx.moveTo(p.x,p.y);else ctx.lineTo(p.x,p.y)});
+    ctx.stroke();
+  });
+  all.forEach(p=>{
+    const r=Math.max(.6,p.mag*2.6);
+    ctx.beginPath();ctx.fillStyle=`hsla(${p.hue},80%,${70+p.mag*20}%,${.35+p.mag*.65})`;
+    ctx.arc(p.x,p.y,r,0,7);ctx.fill();
+    if(p.mag>.92){ctx.fillStyle='rgba(180,220,255,.25)';ctx.beginPath();ctx.arc(p.x,p.y,r*3,0,7);ctx.fill()}
+    if(p.target&&found.has(p.target)){ctx.strokeStyle='rgba(255,215,130,.8)';ctx.beginPath();ctx.arc(p.x,p.y,r+3,0,7);ctx.stroke()}
+  });
+  ctx.restore();
+  ctx.strokeStyle='rgba(255,215,130,.35)';ctx.beginPath();ctx.moveTo(W/2-8,H/2);ctx.lineTo(W/2+8,H/2);ctx.moveTo(W/2,H/2-8);ctx.lineTo(W/2,H/2+8);ctx.stroke();
+}
+function loop(){draw();requestAnimationFrame(loop)}
+function screenToWorld(sx,sy){return {x:(sx-W/2)/cam.z+cam.x,y:(sy-H/2)/cam.z+cam.y}}
+cv.addEventListener('pointerdown',e=>{dragging=true;last={x:e.clientX,y:e.clientY};cv.setPointerCapture(e.pointerId)});
+cv.addEventListener('pointermove',e=>{if(!dragging)return;const dx=e.clientX-last.x,dy=e.clientY-last.y;cam.x-=dx/cam.z;cam.y-=dy/cam.z;last={x:e.clientX,y:e.clientY}});
+cv.addEventListener('pointerup',e=>{
+  dragging=false;
+  const r=cv.getBoundingClientRect(),sx=e.clientX-r.left,sy=e.clientY-r.top;
+  const w=screenToWorld(sx,sy);
+  let best=null,bd=20;
+  all.forEach(p=>{const d=Math.hypot(p.x-w.x,p.y-w.y);if(d<bd){bd=d;best=p}});
+  if(!best){say('nothing but cold space.');return}
+  if(best.target){
+    if(found.has(best.target)){say(best.target+' is already in your notebook.');return}
+    found.add(best.target);document.getElementById('count').textContent=found.size;
+    addLog('you found '+best.target+'. '+best.target.toLowerCase()+' becomes yours.','found');
+    say(best.target+' — logged!');
+    if(found.size===targets.length)addLog('every constellation in this sky is named. you may look away, briefly.','found');
+  } else say('an unnamed star. it does not care.');
+});
+cv.addEventListener('wheel',e=>{e.preventDefault();cam.z=Math.min(3,Math.max(.4,cam.z*(e.deltaY<0?1.12:.89)))});
+document.getElementById('next').onclick=()=>{skyIndex=(skyIndex+1)%SKIES.length;build()};
+document.getElementById('zoomIn').onclick=()=>cam.z=Math.min(3,cam.z*1.2);
+document.getElementById('zoomOut').onclick=()=>cam.z=Math.max(.4,cam.z/1.2);
+document.getElementById('hint').onclick=()=>{
+  const left=targets.filter(t=>!found.has(t.name));
+  if(!left.length){say('the whole sky is yours.');return}
+  const t=left[0],p=t.pts[0];
+  cam.x=p.x;cam.y=p.y;cam.z=1.6;say('something flickers '+Math.round(Math.hypot(p.x,p.y)/10)+' units that way.');
+};
+addEventListener('keydown',e=>{if(e.key.toLowerCase()==='h')document.getElementById('hint').click()});
+resize();build();loop();
+</script>
+</body>
+</html>
